@@ -30,7 +30,7 @@ class RouterElement {
 
     /// The regular expression
     private var regex: NSRegularExpression?
-    
+
     /// The pattern is a simple string
     private var isSimpleString = false
 
@@ -81,22 +81,27 @@ class RouterElement {
 
     /// Process
     ///
-    /// - Parameter request: the request
-    /// - Parameter response: the response
-    /// - Parameter parameterWalker: the walker for the list of parameter handlers
-    /// - Parameter next: the callback
+    /// - Parameter request: The `RouterRequest` object used to work with the incoming
+    ///                     HTTP request.
+    /// - Parameter response: The `RouterResponse` object used to respond to the
+    ///                     HTTP request.
+    /// - Parameter parameterWalker: The `RouterParameterWalker` for the list of parameter
+    ///                             handlers.
+    /// - Parameter next: The closure called to invoke the next handler or middleware
+    ///                     associated with the request.
     func process(request: RouterRequest, response: RouterResponse, parameterWalker: RouterParameterWalker, next: @escaping () -> Void) {
         guard let path = request.parsedURLPath.path else {
             Log.error("Failed to process request (path is nil)")
+            next()
             return
         }
 
         guard (response.error != nil && method == .error)
             || (response.error == nil && (method == request.method || method == .all)) else {
-            next()
-            return
+                next()
+                return
         }
-        
+
         // Check and see if the pattern is just a simple string
         guard !isSimpleString else {
             performSimpleMatch(path: path, request: request, response: response, next: next)
@@ -116,7 +121,7 @@ class RouterElement {
         // The pattern is a regular expression that needs to be checked
         let nsPath = NSString(string: path)
 
-        guard let match = regex.firstMatch(in: path, options: [], range: NSRange(location: 0, length: path.characters.count)) else {
+        guard let match = regex.firstMatch(in: path, options: [], range: NSRange(location: 0, length: path.count)) else {
             next()
             return
         }
@@ -131,25 +136,31 @@ class RouterElement {
             self.processHelper(request: request, response: response, next: next)
         }
     }
-    
+
     /// Perform a simple match
     ///
-    /// - Parameter path: the path being matched
-    /// - Parameter request: the request
-    /// - Parameter response: the router response
-    /// - Parameter next: the closure for the next execution block
+    /// - Parameter path: The path being matched.
+    /// - Parameter request: The `RouterRequest` object used to work with the incoming
+    ///                     HTTP request.
+    /// - Parameter response: The `RouterResponse` object used to respond to the
+    ///                     HTTP request.
+    /// - Parameter next: The closure called to invoke the next handler or middleware
+    ///                     associated with the request.
     private func performSimpleMatch(path: String, request: RouterRequest, response: RouterResponse, next: @escaping () -> Void) {
-        guard let pattern = pattern else { return }
-        
+        guard let pattern = pattern else {
+            next()
+            return
+        }
+
         let pathToMatch = path.isEmpty ? "/" : path
         var matched: Bool
         let matchedPath: String
-        
+
         if allowPartialMatch {
             matched = pathToMatch.hasPrefix(pattern)
             if matched && pattern != "/" {
-                let patternCount = pattern.characters.count
-                if pathToMatch.characters.count > patternCount {
+                let patternCount = pattern.count
+                if pathToMatch.count > patternCount {
                     matched = pathToMatch[pathToMatch.index(pathToMatch.startIndex, offsetBy: patternCount)] == "/"
                 }
             }
@@ -159,7 +170,7 @@ class RouterElement {
             matched = pathToMatch == pattern
             matchedPath = matched ? pathToMatch : ""
         }
-        
+
         if matched {
             request.matchedPath = matchedPath
             request.allowPartialMatch = allowPartialMatch
@@ -182,10 +193,6 @@ class RouterElement {
         looper.next()
     }
 
-    #if os(Linux) && !swift(>=3.2)
-        typealias NSTextCheckingResult = TextCheckingResult
-    #endif
-
     /// Update the request parameters
     ///
     /// - Parameter match: the regular expression result
@@ -195,11 +202,8 @@ class RouterElement {
 
         if let keys = keys {
             for index in 0..<keys.count {
-                #if os(Linux)
-                    let matchRange = match.range(at: index+1)
-                #else
-                    let matchRange = match.rangeAt(index+1)
-                #endif
+                let matchRange = match.range(at: index+1)
+
                 if  matchRange.location != NSNotFound  &&  matchRange.location != -1  {
                     var parameter = urlPath.substring(with: matchRange)
                     if let decodedParameter = parameter.removingPercentEncoding {

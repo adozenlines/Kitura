@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
+import Foundation
 import KituraNet
 import Socket
 import LoggerAPI
-
-import Foundation
+import KituraContracts
 
 // MARK: RouterRequest
 
@@ -57,7 +57,7 @@ public class RouterRequest {
             Log.error("Failed to create regular expressions for domain property")
             return self.hostname
         }
-    }()
+        }()
 
     /// The subdomains string array of request.
     public private(set) lazy var subdomains: [String] = { [unowned self] in
@@ -71,7 +71,7 @@ public class RouterRequest {
         var subdomains = subdomainsString.components(separatedBy: ".")
 
         return subdomains.filter { !$0.isEmpty }
-    }()
+        }()
 
     /// The HTTP version of the request.
     public let httpVersion: HTTPVersion
@@ -91,7 +91,7 @@ public class RouterRequest {
             self._parsedURL = result
             return result
         }
-    }()
+        }()
 
     /// The router as a String.
     public internal(set) var route: String?
@@ -111,13 +111,13 @@ public class RouterRequest {
     /// This contains just the path and query parameters starting with '/'
     /// Use 'urlURL' for the full URL
     @available(*, deprecated, message:
-        "This contains just the path and query parameters starting with '/'. use 'urlURL' instead")
+    "This contains just the path and query parameters starting with '/'. use 'urlURL' instead")
     public var url: String { return serverRequest.urlString }
 
     /// The URL from the request as URLComponents
     /// URLComponents has a memory leak on linux as of swift 3.0.1. Use 'urlURL' instead
     @available(*, deprecated, message:
-        "URLComponents has a memory leak on linux as of swift 3.0.1. use 'urlURL' instead")
+    "URLComponents has a memory leak on linux as of swift 3.0.1. use 'urlURL' instead")
     public var urlComponents: URLComponents { return serverRequest.urlComponents }
 
     /// The URL from the request
@@ -132,23 +132,31 @@ public class RouterRequest {
     /// Parsed Cookies, used to do a lazy parsing of the appropriate headers.
     public lazy var cookies: [String: HTTPCookie] = { [unowned self] in
         return Cookies.parse(headers: self.serverRequest.headers)
-    }()
+        }()
 
     /// List of URL parameters.
     public internal(set) var parameters: [String:String] = [:]
 
-    /// List of query parameters.
+    /// List of query parameters and comma-separated values.
     public lazy var queryParameters: [String:String] = { [unowned self] in
         return self.urlURL.query?.urlDecodedFieldValuePairs ?? [:]
+        }()
+
+    /// Query parameters with values as an array.
+    public lazy var queryParametersMultiValues: [String: [String]] = { [unowned self] in
+        return self.urlURL.query?.urlDecodedFieldMultiValuePairs ?? [:]
     }()
 
     /// User info.
+    /// Can be used by middlewares and handlers to store and pass information on to subsequent handlers.
     public var userInfo: [String: Any] = [:]
 
     /// Body of the message.
     public internal(set) var body: ParsedBody?
 
     internal var handledNamedParameters = Set<String>()
+
+    internal var hasBodyParserBeenUsed = false
 
     /// Initializes a `RouterRequest` instance
     ///
@@ -161,6 +169,14 @@ public class RouterRequest {
         headers = Headers(headers: serverRequest.headers)
     }
 
+    /// Convert query parameters into a QueryParam type
+    ///
+    /// - Parameter type: The QueryParam type describing the expected query parameters
+    /// - Returns: The route's Query parameters as a QueryParam object
+    public func getQueryParameters<T: QueryParams>(as type: T.Type) -> T? {
+        return try? QueryDecoder(dictionary: self.queryParameters).decode(type)
+    }
+
     /// Read the body of the request as Data.
     ///
     /// - Parameter into: Data object in which the body of the request is returned.
@@ -170,6 +186,28 @@ public class RouterRequest {
         return try serverRequest.read(into: &data)
     }
 
+    /// Read the body of the request as a Codable object. It can decode JSON or URLEncoded forms.
+    /// It chooses the decoder by looking up the Content-Type header.
+    /// If there is no header it defaults to JSONDecoder.
+    /// - Parameter as: Codable object to which the body of the request will be converted.
+    /// - Throws: Socket.Error if an error occurred while reading from a socket.
+    /// - Throws: `DecodingError.dataCorrupted` if values requested from the payload are corrupted, or if the given data is not valid JSON.
+    /// - Throws: An error if any value throws an error during decoding.
+    /// - Returns: The instantiated Codable object
+    public func read<T: Decodable>(as type: T.Type) throws -> T {
+        // FIXME: RouterRequest should cache the content type, so that this is just a lookup
+        if CodableHelpers.isContentTypeURLEncoded(self) {
+            let body = try self.readString()
+            guard let urlKeyValuePairs = body?.urlDecodedFieldValuePairs else {
+                throw Error.failedToParseRequestBody(body: body ?? "Failed to read body as String")
+            }
+            return try QueryDecoder(dictionary: urlKeyValuePairs).decode(type)
+        }
+        var data = Data()
+        _ = try serverRequest.read(into: &data)
+        return try JSONDecoder().decode(type, from: data)
+    }
+    
     /// Read the body of the request as String.
     ///
     /// - Throws: Socket.Error if an error occurred while reading from a socket.
@@ -189,7 +227,7 @@ public class RouterRequest {
             return nil
         }
 
-        let headerValues = acceptHeaderValue.characters.split(separator: ",").map(String.init)
+        let headerValues = acceptHeaderValue.split(separator: ",").map(String.init)
         // special header value that matches all types
         let matchAllPattern: String
         if header.caseInsensitiveCompare("Accept") == .orderedSame {
@@ -245,9 +283,17 @@ private class Cookies {
             return nil
         }
 
-        let name = cookie.substring(to: range.lowerBound).trimmingCharacters(in: .whitespaces)
-        var value = cookie.substring(from: range.upperBound).trimmingCharacters(in: .whitespaces)
-        let chars = value.characters
+        #if os(Linux)
+            // https://bugs.swift.org/browse/SR-5727
+            // ETA post-4.0
+            let name = String(cookie[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+            var value = String(cookie[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        #else
+            let name = cookie[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            var value = cookie[range.upperBound...].trimmingCharacters(in: .whitespaces)
+        #endif
+
+        let chars = value
         if chars.count >= 2 && chars.first == "\"" && chars.last == "\"" {
             // unquote value
             value.remove(at: value.startIndex)

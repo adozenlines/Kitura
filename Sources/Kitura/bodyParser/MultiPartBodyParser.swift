@@ -95,7 +95,7 @@ class MultiPartBodyParser: BodyParserProtocol {
     // returns true if it was header line
     private func handleHeaderLine(_ line: String, part: inout Part) {
         if let labelRange = getLabelRange(of: "content-type:", in: line) {
-            part.type = line.substring(from: line.index(after: labelRange.upperBound))
+            part.type = String(line[line.index(after: labelRange.upperBound)...])
             part.headers[.type] = line
             return
         }
@@ -105,12 +105,12 @@ class MultiPartBodyParser: BodyParserProtocol {
             if let nameRange = line.range(of: "name=", options: caseInsensitiveSearch, range: labelRange.upperBound..<line.endIndex) {
                 let valueStartIndex = line.index(after: nameRange.upperBound)
                 let valueEndIndex = line.range(of: "\"", range: valueStartIndex..<line.endIndex)
-                part.name = line.substring(with: valueStartIndex..<(valueEndIndex?.lowerBound ?? line.endIndex))
+                part.name = String(line[valueStartIndex..<(valueEndIndex?.lowerBound ?? line.endIndex)])
             }
             if let filenameRange = line.range(of: "filename=", options: caseInsensitiveSearch, range: labelRange.upperBound..<line.endIndex) {
                 let valueStartIndex = line.index(after: filenameRange.upperBound)
                 let valueEndIndex = line.range(of: "\"", range: valueStartIndex..<line.endIndex)
-                part.filename = line.substring(with: valueStartIndex..<(valueEndIndex?.lowerBound ?? line.endIndex))
+                part.filename = String(line[valueStartIndex..<(valueEndIndex?.lowerBound ?? line.endIndex)])
             }
             part.headers[.disposition] = line
             return
@@ -125,21 +125,25 @@ class MultiPartBodyParser: BodyParserProtocol {
             return
         }
 
+        if let _ = getLabelRange(of: "content-range:", in: line) {
+            part.headers[.contentRange] = line
+            return
+        }
+
         // custom headers could be handed here
     }
 
     private func getLabelRange(of searchedString: String, in containingString: String) ->
         Range<String.Index>? {
-        let options: String.CompareOptions = [.anchored, .caseInsensitive]
+            let options: String.CompareOptions = [.anchored, .caseInsensitive]
 
-        return containingString.range(of: searchedString,
-                                      options: options,
-                                      range: containingString.startIndex..<containingString.endIndex)
+            return containingString.range(of: searchedString,
+                                          options: options,
+                                          range: containingString.startIndex..<containingString.endIndex)
     }
 }
 
 extension Data {
-
     func hasSuffix(_ data: Data) -> Bool {
         if data.count > self.count {
             return false

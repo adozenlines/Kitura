@@ -16,6 +16,7 @@
 
 import XCTest
 import Foundation
+import KituraContracts
 
 @testable import Kitura
 @testable import KituraNet
@@ -24,7 +25,8 @@ class TestRequests: KituraTest {
 
     static var allTests: [(String, (TestRequests) -> () throws -> Void)] {
         return [
-                   ("testURLParameters", testURLParameters),
+                   ("testRouteParameters", testRouteParameters),
+                   ("testQueryParameters", testQueryParameters),
                    ("testCustomMiddlewareURLParameter", testCustomMiddlewareURLParameter),
                    ("testCustomMiddlewareURLParameterWithQueryParam", testCustomMiddlewareURLParameterWithQueryParam),
                    ("testParameters", testParameters),
@@ -34,7 +36,7 @@ class TestRequests: KituraTest {
 
     let router = TestRequests.setupRouter()
 
-    func testURLParameters() {
+    func testRouteParameters() {
         // Set up router for this test
         let router = Router()
 
@@ -62,6 +64,94 @@ class TestRequests: KituraTest {
                 expectation.fulfill()
             })
         }
+    }
+
+    func testQueryParameters() {
+        // Set up router for this test
+        let router = Router()
+
+        struct Params: QueryParams {
+            let key1: String
+            let key2: String
+            let key3: String
+        }
+
+        // Test query params
+        router.get("/xyz") { request, _, next in
+            let expectedQueryParams = ["key1" : "value1", "key2" : "value2", "key3" : "value3"]
+            guard let parsedParams = request.getQueryParameters(as: Params.self) else {
+                XCTFail("Failed to get query parameters")
+                return next()
+            }
+            XCTAssert(parsedParams.key1 == "value1" && parsedParams.key2 == "value2" && parsedParams.key3 == "value3" )
+            XCTAssertEqual(expectedQueryParams.count, request.queryParameters.count, "Unexpected number of query parameters!")
+            for (key, value) in expectedQueryParams {
+                guard let v = request.queryParameters[key] else {
+                    XCTFail("Query parameter \(key) was nil!")
+                    return next()
+                }
+                XCTAssertEqual(v, value)
+            }
+            next()
+        }
+
+        struct Params2: QueryParams {
+            let key1: String
+            let key2: String
+            let key3: [String]
+        }
+
+        // Test query parameters with multiple values assigned to a single key (array)
+        router.get("/abc") { request, _, next in
+            let expectedQueryParams = ["key1" : "value1", "key2" : "value2", "key3" : "value3.1,value3.2,value3.3"]
+            guard let parsedParams = request.getQueryParameters(as: Params2.self) else {
+                XCTFail("Failed to get query parameters")
+                return next()
+            }
+            XCTAssert(parsedParams.key1 == "value1" && parsedParams.key2 == "value2" && parsedParams.key3 == ["value3.1","value3.2","value3.3"] )
+            XCTAssertEqual(expectedQueryParams.count, request.queryParameters.count, "Unexpected number of query parameters!")
+            for (key, value) in expectedQueryParams {
+                guard let v = request.queryParameters[key] else {
+                    XCTFail("Query parameter \(key) was nil!")
+                    return
+                }
+                XCTAssertEqual(v, value)
+            }
+            next()
+        }
+
+        // Test query parameters with multiple values assigned to a single key
+        // with values in an array rather than concatenated.
+        router.get("/abc") { request, _, next in
+            let expectedQueryParams = ["key1" : ["value1"], "key2" : ["value2"], "key3" : ["value3.1", "value3.2", "value3.3"]]
+            XCTAssertEqual(expectedQueryParams.count, request.queryParametersMultiValues.count, "Unexpected number of query parameters!")
+            for (key, value) in expectedQueryParams {
+                guard let v = request.queryParametersMultiValues[key] else {
+                    XCTFail("Query parameter \(key) was nil!")
+                    return
+                }
+                XCTAssertEqual(v, value)
+            }
+            next()
+        }
+
+        router.all { _, response, next in
+            response.status(.OK).send("OK")
+            next()
+        }
+
+        performServerTest(router, asyncTasks: { expectation in
+            self.performRequest("get", path: "/abc?key1=value1&key2=value2&key3=value3.1&key3=value3.2&key3=value3.3", callback: { response in
+                XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
+                expectation.fulfill()
+            })
+        },
+        { expectation in
+            self.performRequest("get", path: "/xyz?key1=value1&key2=value2&key3=value3", callback: { response in
+                XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
+                expectation.fulfill()
+            })
+        })
     }
 
     private func runMiddlewareTest(path: String) {
@@ -192,6 +282,85 @@ class TestRequests: KituraTest {
                     XCTFail()
                 }
 
+                expectation.fulfill()
+            })
+        })
+    }
+
+    func testOneParameterMultipleHandlers() {
+        let router = Router()
+
+        router.parameter(["id"], handlers: [
+            { request, response, value, next in
+                request.userInfo["handler1"] = true
+                next()
+            },
+            { request, response, value, next in
+                request.userInfo["handler2"] = true
+                next()
+        }])
+
+        router.get("/item/:id") { request, response, next in
+            response.status(.OK)
+            XCTAssertTrue(request.userInfo["handler1"] as? Bool ?? false)
+            XCTAssertTrue(request.userInfo["handler2"] as? Bool ?? false)
+            next()
+        }
+
+        performServerTest(router) { expectation in
+            self.performRequest("get", path: "item/1000", callback: { response in
+                expectation.fulfill()
+            })
+        }
+    }
+
+    func testMultipleParametersMultipleHandlers() {
+        let router = Router()
+
+        router.parameter(["id"], handlers: [
+            { request, response, value, next in
+                request.userInfo["handler1"] = true
+                next()
+            },
+            { request, response, value, next in
+                request.userInfo["handler2"] = true
+                next()
+            }])
+
+        router.parameter(["name"], handlers: [
+            { request, response, value, next in
+                request.userInfo["handler3"] = true
+                next()
+            },
+            { request, response, value, next in
+                request.userInfo["handler4"] = true
+                next()
+            }])
+
+        router.get("/item/:id") { request, response, next in
+            response.status(.OK)
+            XCTAssertTrue(request.userInfo["handler1"] as? Bool ?? false)
+            XCTAssertTrue(request.userInfo["handler2"] as? Bool ?? false)
+            XCTAssertNil(request.userInfo["handler3"])
+            XCTAssertNil(request.userInfo["handler4"])
+            next()
+        }
+
+        router.get("/user/:name") { request, response, next in
+            response.status(.OK)
+            XCTAssertTrue(request.userInfo["handler3"] as? Bool ?? false)
+            XCTAssertTrue(request.userInfo["handler4"] as? Bool ?? false)
+            XCTAssertNil(request.userInfo["handler1"])
+            XCTAssertNil(request.userInfo["handler2"])
+            next()
+        }
+
+        performServerTest(router, asyncTasks: { expectation in
+            self.performRequest("get", path: "item/1000", callback: { response in
+                expectation.fulfill()
+            })
+        } , { expectation in
+            self.performRequest("get", path: "user/bob", callback: { response in
                 expectation.fulfill()
             })
         })

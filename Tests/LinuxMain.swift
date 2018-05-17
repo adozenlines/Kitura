@@ -1,5 +1,5 @@
 /**
- * Copyright IBM Corporation 2016
+ * Copyright IBM Corporation 2016, 2017
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import Glibc
 @testable import KituraTests
 
 // http://stackoverflow.com/questions/24026510/how-do-i-shuffle-an-array-in-swift
-extension MutableCollection where Indices.Iterator.Element == Index {
+extension MutableCollection {
     mutating func shuffle() {
         let c = count
         guard c > 1 else { return }
@@ -29,7 +29,7 @@ extension MutableCollection where Indices.Iterator.Element == Index {
             let d: IndexDistance = numericCast(random() % numericCast(unshuffledCount))
             guard d != 0 else { continue }
             let i = index(firstUnshuffled, offsetBy: d)
-            swap(&self[firstUnshuffled], &self[i])
+            swapAt(firstUnshuffled, i)
         }
     }
 }
@@ -56,5 +56,10 @@ XCTMain([
     testCase(TestSubrouter.allTests.shuffled()),
     testCase(TestStaticFileServer.allTests.shuffled()),
     testCase(TestTemplateEngine.allTests.shuffled()),
-    testCase(TestStack.allTests.shuffled())
-].shuffled())
+    testCase(TestStack.allTests.shuffled()),
+    testCase(TestCodableRouter.allTests.shuffled()),
+    testCase(TestDecodingErrorExtension.allTests.shuffled()),
+    testCase(TestBridgingHTTPStatusCode.allTests.shuffled()),
+    testCase(TestBridgingRequestError.allTests.shuffled()),
+//    testCase(TestCRUDTypeRouter.allTests.shuffled()),
+    ].shuffled())
