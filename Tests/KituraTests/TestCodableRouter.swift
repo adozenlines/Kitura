@@ -41,7 +41,9 @@ class TestCodableRouter: KituraTest {
             ("testCodableGetSingleQueryParameters", testCodableGetSingleQueryParameters),
             ("testCodableGetArrayQueryParameters", testCodableGetArrayQueryParameters),
             ("testCodableDeleteQueryParameters", testCodableDeleteQueryParameters),
-	    ("testCodablePostSuccessStatuses", testCodablePostSuccessStatuses)
+            ("testCodablePostSuccessStatuses", testCodablePostSuccessStatuses),
+            ("testNoDataCustomStatus", testNoDataCustomStatus),
+            ("testNoDataDefaultStatus", testNoDataDefaultStatus)
         ]
     }
 
@@ -51,6 +53,7 @@ class TestCodableRouter: KituraTest {
 
     // Reset for each test
     override func setUp() {
+        super.setUp()           // Initialize logging
         router = Router()
         userStore = [1: User(id: 1, name: "Mike"), 2: User(id: 2, name: "Chris"), 3: User(id: 3, name: "Ricardo")]
     }
@@ -489,6 +492,59 @@ class TestCodableRouter: KituraTest {
             .run()
     }
 
+    // Tests that a handler is able to return a nil response with a custom success status.
+    func testNoDataCustomStatus() {
+        router.put("/noBody") { (id: Int, data: User, respondWith: (User?, RequestError?) -> Void) in
+            print("PUT on /noBody/\(id)")
+            respondWith(nil, .noContent)
+        }
+        router.post("/noBody") { (data: User, respondWith: (Int?, User?, RequestError?) -> Void) in
+            print("POST on /noBody")
+            respondWith(1, nil, .noContent)
+        }
+        
+        let user = User(id: 1, name: "David")
+        buildServerTest(router, timeout: 30)
+
+            .request("post", path: "/noBody", data: user)
+            .hasStatus(.noContent)
+            .hasHeader("Location", only: "1")
+            .hasNoData()
+            
+            .request("put", path: "/noBody/1", data: user)
+            .hasStatus(.noContent)
+            .hasNoData()
+            
+            .run()
+    }
+
+    // Tests that a handler is able to return a nil response with the default success status
+    // for that method.
+    func testNoDataDefaultStatus() {
+        router.put("/noBody") { (id: Int, data: User, respondWith: (User?, RequestError?) -> Void) in
+            print("PUT on /noBody/\(id)")
+            respondWith(nil, nil)
+        }
+        router.post("/noBody") { (data: User, respondWith: (Int?, User?, RequestError?) -> Void) in
+            print("POST on /noBody")
+            respondWith(1, nil, nil)
+        }
+        
+        let user = User(id: 1, name: "David")
+        buildServerTest(router, timeout: 30)
+
+            .request("post", path: "/noBody", data: user)
+            .hasStatus(.created)
+            .hasHeader("Location", only: "1")
+            .hasNoData()
+            
+            .request("put", path: "/noBody/1", data: user)
+            .hasStatus(.OK)
+            .hasNoData()
+            
+            .run()
+    }
+
     func testBasicPatch() {
         router.patch("/users") { (id: Int, patchUser: OptionalUser, respondWith: (User?, RequestError?) -> Void) -> Void in
             print("PATCH on /users/\(id)")
@@ -660,6 +716,15 @@ class TestCodableRouter: KituraTest {
             respondWith(query, nil)
         }
 
+        router.get("/optionalquery") { (query: MyQuery?, respondWith: (MyQuery?, RequestError?) -> Void) in
+            if let query = query {
+                XCTAssertEqual(query, expectedQuery)
+                respondWith(query, nil)
+            } else {
+                respondWith(nil, nil)
+            }
+        }
+
         buildServerTest(router, timeout: 30)
             .request("get", path: "/query\(queryStr)")
             .hasStatus(.OK)
@@ -667,6 +732,19 @@ class TestCodableRouter: KituraTest {
             .hasData(expectedQuery)
 
             .request("get", path: "/query?param=badRequest")
+            .hasStatus(.badRequest)
+            .hasNoData()
+
+            .request("get", path: "/optionalquery\(queryStr)")
+            .hasStatus(.OK)
+            .hasContentType(withPrefix: "application/json")
+            .hasData(expectedQuery)
+
+            .request("get", path: "/optionalquery")
+            .hasStatus(.OK)
+            .hasNoData()
+
+            .request("get", path: "/optionalquery?param=badRequest")
             .hasStatus(.badRequest)
             .hasNoData()
 
@@ -690,13 +768,35 @@ class TestCodableRouter: KituraTest {
             respondWith([query], nil)
         }
 
+        router.get("/optionalquery") { (query: MyQuery?, respondWith: ([MyQuery]?, RequestError?) -> Void) in
+            if let query = query {
+                XCTAssertEqual(query, expectedQuery)
+                respondWith([query], nil)
+            } else {
+                respondWith(nil, nil)
+            }
+        }
+
         buildServerTest(router, timeout: 30)
             .request("get", path: "/query\(queryStr)")
             .hasStatus(.OK)
             .hasContentType(withPrefix: "application/json")
             .hasData([expectedQuery])
 
+            .request("get", path: "/optionalquery\(queryStr)")
+            .hasStatus(.OK)
+            .hasContentType(withPrefix: "application/json")
+            .hasData([expectedQuery])
+
+            .request("get", path: "/optionalquery")
+            .hasStatus(.OK)
+            .hasNoData()
+
             .request("get", path: "/query?param=badRequest")
+            .hasStatus(.badRequest)
+            .hasNoData()
+
+            .request("get", path: "/optionalquery?param=badRequest")
             .hasStatus(.badRequest)
             .hasNoData()
 
@@ -720,12 +820,31 @@ class TestCodableRouter: KituraTest {
             respondWith(nil)
         }
 
+        router.delete("/optionalquery") { (query: MyQuery?, respondWith: (RequestError?) -> Void) in
+            if let query = query {
+                XCTAssertEqual(query, expectedQuery)
+            }
+            respondWith(nil)
+        }
+
         buildServerTest(router, timeout: 30)
             .request("delete", path: "/query\(queryStr)")
             .hasStatus(.noContent)
             .hasNoData()
 
             .request("delete", path: "/query?param=badRequest")
+            .hasStatus(.badRequest)
+            .hasNoData()
+
+            .request("delete", path: "/optionalquery\(queryStr)")
+            .hasStatus(.noContent)
+            .hasNoData()
+
+            .request("delete", path: "/optionalquery")
+            .hasStatus(.noContent)
+            .hasNoData()
+
+            .request("delete", path: "/optionalquery?param=badRequest")
             .hasStatus(.badRequest)
             .hasNoData()
 
